@@ -361,7 +361,7 @@ HTML_TEMPLATE = """
                 </div>
                 
                 <div class="chat-input">
-                    <textarea id="dm-input" placeholder="输入她的消息..."></textarea>
+                    <textarea id="dm-input" placeholder="输入用户的消息..."></textarea>
                     <button type="button" onclick="sendDmMessage()" id="dm-btn">💌 发送</button>
                 </div>
             </div>
@@ -386,7 +386,7 @@ HTML_TEMPLATE = """
     </div>
     
     <script>
-        let dmHistory = [];
+        let dmHistory = []; // 每个元素是对象 { role: 'user' | 'bot', text: string, text_zh: string }
         
         // 切换 Tab
         function switchTab(tab) {
@@ -469,7 +469,8 @@ HTML_TEMPLATE = """
                 return;
             }
             
-            dmHistory.push('她: ' + message);
+            // 用户消息（暂时没有中文翻译）
+            dmHistory.push({ role: 'user', text: message, text_zh: '' });
             renderChatMessages();
             input.value = '';
             
@@ -478,10 +479,13 @@ HTML_TEMPLATE = """
             document.getElementById('dm-btn').disabled = true;
             
             try {
+                // 为了兼容后端，还是用字符串格式发送历史
+                const historyStrings = dmHistory.map(m => (m.role === 'user' ? '她: ' : '我: ') + m.text);
+                
                 const response = await fetch('/api/dm', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ history: dmHistory })
+                    body: JSON.stringify({ history: historyStrings })
                 });
                 
                 const data = await response.json();
@@ -491,7 +495,8 @@ HTML_TEMPLATE = """
                     return;
                 }
                 
-                dmHistory.push('我: ' + data.reply_text);
+                // 我的回复（有英文和中文）
+                dmHistory.push({ role: 'bot', text: data.reply_text, text_zh: data.reply_zh || '' });
                 renderChatMessages();
                 
                 document.getElementById('dm-reply_text').textContent = data.reply_text;
@@ -512,14 +517,15 @@ HTML_TEMPLATE = """
             container.innerHTML = '';
             
             dmHistory.forEach(msg => {
-                const isUser = msg.startsWith('她: ');
-                const text = isUser ? msg.substring(3) : msg.startsWith('我: ') ? msg.substring(3) : msg;
-                
+                const isUser = msg.role === 'user';
                 const div = document.createElement('div');
                 div.className = 'message ' + (isUser ? 'user' : 'bot');
                 div.innerHTML = `
-                    <div class="message-label">${isUser ? '她' : '我'}</div>
-                    <div class="message-bubble">${text}</div>
+                    <div class="message-label">${isUser ? '用户' : '我'}</div>
+                    <div class="message-bubble">
+                        <div style="margin-bottom: 5px;">${msg.text}</div>
+                        ${msg.text_zh ? `<div style="color: #666; font-size: 13px; border-top: 1px dashed #ddd; padding-top: 5px; margin-top: 5px;">${msg.text_zh}</div>` : ''}
+                    </div>
                 `;
                 container.appendChild(div);
             });

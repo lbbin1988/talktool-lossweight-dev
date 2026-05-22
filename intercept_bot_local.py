@@ -677,7 +677,14 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         
         # 3. 构建响应
         response = BotResponse()
-        response.tag = tag
+        # 标签加上中文描述
+        tag_names = {
+            'A': 'A - 甜品上瘾',
+            'B': 'B - 情绪暴食',
+            'C': 'C - 懒人摆烂',
+            'D': 'D - 反复失败'
+        }
+        response.tag = tag_names.get(tag, tag)
         response.emotion = "default"
         response.reply_text = en_text
         response.reply_zh = zh_text
@@ -786,7 +793,14 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         
         # 3. 构建响应
         response = BotResponse()
-        response.tag = tag
+        # 标签加上中文描述
+        tag_names = {
+            'A': 'A - 甜品上瘾',
+            'B': 'B - 情绪暴食',
+            'C': 'C - 懒人摆烂',
+            'D': 'D - 反复失败'
+        }
+        response.tag = tag_names.get(tag, tag)
         response.emotion = "default"
         response.reply_text = en_text
         response.reply_zh = zh_text
