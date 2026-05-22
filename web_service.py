@@ -231,10 +231,10 @@ HTML_TEMPLATE = """
             flex-direction: column;
         }
         .message.user {
-            align-items: flex-end;
+            align-items: flex-start;
         }
         .message.bot {
-            align-items: flex-start;
+            align-items: flex-end;
         }
         .message-bubble {
             max-width: 75%;
@@ -469,8 +469,22 @@ HTML_TEMPLATE = """
                 return;
             }
             
-            // 用户消息（不需要翻译，模型会处理）
-            dmHistory.push({ role: 'user', text: message });
+            // 获取用户消息的翻译
+            let userTextZh = '';
+            try {
+                const translateResponse = await fetch('/api/translate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ text: message })
+                });
+                const translateData = await translateResponse.json();
+                userTextZh = translateData.translation || '';
+            } catch (e) {
+                console.log('Translation error:', e);
+            }
+            
+            // 用户消息（带翻译）
+            dmHistory.push({ role: 'user', text: message, text_zh: userTextZh });
             renderChatMessages();
             input.value = '';
             
@@ -496,7 +510,7 @@ HTML_TEMPLATE = """
                 }
                 
                 // 我的回复（有英文和中文）
-                dmHistory.push({ role: 'bot', text: data.reply_text });
+                dmHistory.push({ role: 'bot', text: data.reply_text, text_zh: data.reply_zh || '' });
                 renderChatMessages();
                 
                 document.getElementById('dm-reply_text').textContent = data.reply_text;
@@ -520,7 +534,13 @@ HTML_TEMPLATE = """
                 const isUser = msg.role === 'user';
                 const div = document.createElement('div');
                 div.className = 'message ' + (isUser ? 'user' : 'bot');
-                div.innerHTML = `<div class="message-bubble">${msg.text}</div>`;
+                div.innerHTML = `
+                    <div class="message-label">${isUser ? '用户' : '我'}</div>
+                    <div class="message-bubble">
+                        <div style="margin-bottom: 5px;">${msg.text}</div>
+                        ${msg.text_zh ? `<div style="color: #666; font-size: 13px; border-top: 1px dashed #ddd; padding-top: 5px; margin-top: 5px;">${msg.text_zh}</div>` : ''}
+                    </div>
+                `;
                 container.appendChild(div);
             });
             
@@ -597,6 +617,24 @@ def api_dm():
             'reply_zh': result.reply_zh,
             'alternatives': result.alternatives,
             'detected_language': result.detected_language
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/translate', methods=['POST'])
+def api_translate():
+    try:
+        data = request.json
+        text = data.get('text', '')
+        
+        global bot
+        if bot is None:
+            bot = LocalInterceptBot()
+        
+        translation = bot._simple_translate(text)
+        
+        return jsonify({
+            'translation': translation
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
