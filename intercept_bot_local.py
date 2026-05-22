@@ -353,11 +353,22 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         for i, prompt in enumerate(variant_prompts):
             if self.mode != "template" and user_input:
                 try:
-                    system_prompt = """You are an Instagram health and wellness influencer.
-                    Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
-                    End with a hook like 'Check my profile!' or 'DM me!'
-                    
-                    Do NOT use these forbidden words: lose weight fast, miracle, instant result, fat burner, appetite suppressant, detox, diet pill, slimming tea, before/after, weight loss product, burn fat, slim down, guarantee, results"""
+                    # 每个备选话术使用不同的system_prompt，确保完全不同
+                    if i == 0:
+                        system_prompt = """You are an Instagram health and wellness influencer.
+Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
+End with a hook like 'Check my profile!' or 'DM me!'
+Make this reply focus on encouragement and support."""
+                    elif i == 1:
+                        system_prompt = """You are an Instagram health and wellness influencer.
+Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
+End with a hook like 'DM me!' or 'Check out my page!'
+Make this reply focus on small, actionable tips."""
+                    else:
+                        system_prompt = """You are an Instagram health and wellness influencer.
+Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
+End with a hook like 'Follow me!' or 'See my profile!'
+Make this reply focus on positivity and motivation."""
                     
                     full_prompt = f"{system_prompt}\n\nUser message: {user_input}\n\nReply:"
                     response = self._generate_response(system_prompt, full_prompt)

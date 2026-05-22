@@ -534,11 +534,14 @@ HTML_TEMPLATE = """
                 const isUser = msg.role === 'user';
                 const div = document.createElement('div');
                 div.className = 'message ' + (isUser ? 'user' : 'bot');
+                // 用户紫色气泡：原文和翻译都用白色；我的白色气泡：原文黑色，翻译深灰色
+                const translationColor = isUser ? 'rgba(255,255,255,0.9)' : '#666';
+                const borderColor = isUser ? 'rgba(255,255,255,0.3)' : '#ddd';
                 div.innerHTML = `
                     <div class="message-label">${isUser ? '用户' : '我'}</div>
                     <div class="message-bubble">
                         <div style="margin-bottom: 5px;">${msg.text}</div>
-                        ${msg.text_zh ? `<div style="color: #666; font-size: 13px; border-top: 1px dashed #ddd; padding-top: 5px; margin-top: 5px;">${msg.text_zh}</div>` : ''}
+                        ${msg.text_zh ? `<div style="color: ${translationColor}; font-size: 13px; border-top: 1px dashed ${borderColor}; padding-top: 5px; margin-top: 5px;">${msg.text_zh}</div>` : ''}
                     </div>
                 `;
                 container.appendChild(div);
