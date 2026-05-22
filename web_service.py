@@ -653,5 +653,11 @@ if __name__ == '__main__':
     print("3. 💌 DM 对话：模拟私信聊天")
     print("\n⏹️  停止服务：按 Ctrl + C")
     print("=" * 60)
+    
+    # 启动前就加载好模型
     print("\n正在加载模型，请稍候...")
+    bot = LocalInterceptBot()
+    # 预加载模型
+    bot._load_model()
+    
     app.run(host='0.0.0.0', port=5005, debug=False)

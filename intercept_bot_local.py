@@ -140,59 +140,34 @@ class LocalInterceptBot:
         
         from transformers import AutoTokenizer, AutoModelForCausalLM
         import torch
+        import os
+        from pathlib import Path
+        
+        # 直接使用本地缓存路径
+        home_dir = Path.home()
+        local_model_path = home_dir / ".cache/huggingface/hub/models--Qwen--Qwen2-1.5B-Chat/snapshots/ba1cf1846d7df0a0591d6c00649f57e798519da8"
         
         print("="*60)
         print(f"🚀 正在准备模型: {self.model_name}")
         print("="*60)
-        print("📥 如果是第一次使用，模型将自动从 Hugging Face 下载")
-        print("⏱️  模型大小约 1-3GB，下载需要几分钟，请耐心等待...")
-        print("💡 下载完成后，后续使用会直接从本地加载，无需重新下载")
+        print(f"📥 从本地路径加载: {local_model_path}")
         print("-"*60)
         
         self._tokenizer = AutoTokenizer.from_pretrained(
-            self.model_name,
+            str(local_model_path),
             trust_remote_code=True,
         )
         print("✅ Tokenizer 加载完成")
         
-        # 尝试使用4-bit量化加速
-        try:
-            from transformers import BitsAndBytesConfig
-            bnb_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_use_double_quant=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.bfloat16
-            )
-            print("⏳ 正在加载模型（使用4-bit量化加速）...")
-            self._model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                trust_remote_code=True,
-                device_map="auto",
-                quantization_config=bnb_config,
-                attn_implementation="flash_attention_2",
-            )
-            print("✅ 使用4-bit量化加载完成")
-        except ImportError:
-            # 如果没有bitsandbytes，尝试使用GPTQ量化或常规加载
-            try:
-                print("⏳ 正在加载模型（使用4-bit量化）...")
-                self._model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    trust_remote_code=True,
-                    device_map="auto",
-                    load_in_4bit=True,
-                )
-                print("✅ 使用4-bit量化加载完成")
-            except Exception:
-                print("⏳ 正在加载模型（标准模式）...")
-                self._model = AutoModelForCausalLM.from_pretrained(
-                    self.model_name,
-                    trust_remote_code=True,
-                    device_map="auto",
-                )
-                print("✅ 模型加载完成（未使用量化）")
-
+        # 直接使用标准模式加载（Mac上更稳定）
+        print("⏳ 正在加载模型（标准模式）...")
+        self._model = AutoModelForCausalLM.from_pretrained(
+            str(local_model_path),
+            trust_remote_code=True,
+            device_map="auto",
+        )
+        print("✅ 模型加载完成")
+        
         print("="*60)
         print("✅ 模型准备完成！")
         print("="*60)
@@ -338,113 +313,67 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         return (BACKUP_TEMPLATES['A']['default'][0][0], BACKUP_TEMPLATES['A']['default'][0][1], "引导关注主页")
 
     def _get_backup_alternatives(self, tag: str, emotion: str, reply_text: str = "", user_input: str = "") -> List[dict]:
-        """获取三条完全不同的备选话术（确保与推荐话术不同，并基于用户输入动态生成）"""
+        """获取两条完全不同的备选话术（确保与推荐话术完全不同）"""
         alternatives = []
         used_texts = {reply_text} if reply_text else set()  # 记录已使用的话术
         
-        # 生成三条完全不同的备选话术
-        variant_prompts = [
-            "Generate a friendly, supportive Instagram comment reply about healthy living. Use a warm, conversational tone like a sister chatting. End with a hook like 'Check my profile!' or 'DM me!'",
-            "Create an encouraging Instagram reply for someone on a health journey. Keep it positive and relatable. Include a call to action to visit profile.",
-            "Write a supportive sisterly message for someone struggling with health habits. Make it feel genuine and caring. Add a hook to check your profile."
+        # 预定义三个完全不同的回复模板库
+        alternative_replies = [
+            # 风格1：鼓励支持型
+            {
+                'en': "Hey girl! You're doing your best and that's all that matters! Progress isn't always linear, but every step counts. Keep going - you've got this! Check out my page for more support.",
+                'zh': "嘿姑娘！你已经在尽力了，这就够了！进步不总是线性的，但每一步都很重要。继续加油——你可以的！来看看我的主页获取更多支持。"
+            },
+            # 风格2：实用建议型
+            {
+                'en': "Hi there! I totally relate to what you're saying. Something that really helped me was starting with tiny daily changes - like drinking more water or taking short walks. DM me if you want tips!",
+                'zh': "嗨！我完全理解你说的。真正帮助我的是从微小的日常改变开始——比如多喝水或者短途散步。想要小贴士可以私信我！"
+            },
+            # 风格3：积极激励型
+            {
+                'en': "Hey! Don't be too hard on yourself! We all have off days, but the important thing is that you're trying. You're stronger than you think! Follow me for daily inspiration.",
+                'zh': "嘿！别对自己太苛刻！我们都会有状态不好的时候，但重要的是你在尝试。你比你想象的更强大！关注我获取每日灵感。"
+            }
         ]
         
-        # 使用模型生成三条不同的备选话术
-        for i, prompt in enumerate(variant_prompts):
-            if self.mode != "template" and user_input:
-                try:
-                    # 每个备选话术使用不同的system_prompt，确保完全不同
-                    if i == 0:
-                        system_prompt = """You are an Instagram health and wellness influencer.
-Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
-End with a hook like 'Check my profile!' or 'DM me!'
-Make this reply focus on encouragement and support."""
-                    elif i == 1:
-                        system_prompt = """You are an Instagram health and wellness influencer.
-Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
-End with a hook like 'DM me!' or 'Check out my page!'
-Make this reply focus on small, actionable tips."""
-                    else:
-                        system_prompt = """You are an Instagram health and wellness influencer.
-Write a friendly, supportive reply in English. Keep it conversational like chatting with a sister.
-End with a hook like 'Follow me!' or 'See my profile!'
-Make this reply focus on positivity and motivation."""
-                    
-                    full_prompt = f"{system_prompt}\n\nUser message: {user_input}\n\nReply:"
-                    response = self._generate_response(system_prompt, full_prompt)
-                    
-                    # 提取回复内容
-                    lines = response.strip().split('\n')
-                    alt_text = ""
-                    for line in lines:
-                        line = line.strip()
-                        if line and not re.match(r'^(标签|Tag|Emotion|情绪|Dialogue|话术|中文|Chinese|#)', line, re.IGNORECASE):
-                            # 去除引号
-                            line = line.strip('\'"\"')
-                            if len(line) > 20:
-                                alt_text = line
-                                break
-                    
-                    if alt_text and alt_text not in used_texts and not self._is_similar(alt_text, reply_text):
-                        alt_zh = self._simple_translate(alt_text)
-                        alternatives.append({'text': alt_text, 'text_zh': alt_zh})
-                        used_texts.add(alt_text)
-                except Exception as e:
-                    print(f"Error generating alternative {i+1}: {e}")
+        # 随机打乱顺序
+        import random
+        random.shuffle(alternative_replies)
         
-        # 如果模型生成不够，使用备用话术库补充（确保不同）
-        if len(alternatives) < 3:
-            templates = BACKUP_TEMPLATES.get(tag, BACKUP_TEMPLATES.get('B', {}))
-            emotion_templates = templates.get(emotion, templates.get('default', []))
-            
-            # 收集所有可用的模板
-            all_templates = []
-            if emotion_templates:
-                all_templates.extend(emotion_templates)
-            
-            # 添加其他标签的模板
-            for other_tag in BACKUP_TEMPLATES.keys():
-                if other_tag != tag:
-                    other_templates = BACKUP_TEMPLATES[other_tag].get(emotion, BACKUP_TEMPLATES[other_tag].get('default', []))
-                    all_templates.extend(other_templates)
-            
-            # 随机打乱并选择不同的
-            import random
-            random.shuffle(all_templates)
-            
-            for t in all_templates:
-                if len(alternatives) >= 3:
-                    break
-                if t[0] not in used_texts and not self._is_similar(t[0], reply_text):
-                    alternatives.append({
-                        'text': t[0],
-                        'text_zh': t[1]
-                    })
-                    used_texts.add(t[0])
-        
-        # 如果仍然不够三条，使用改写版本
-        while len(alternatives) < 3:
-            # 找到一个基础文本进行改写
-            base_text = ""
-            if 'A' in BACKUP_TEMPLATES and BACKUP_TEMPLATES['A'].get('default'):
-                base_text = BACKUP_TEMPLATES['A']['default'][0][0]
-            elif 'B' in BACKUP_TEMPLATES and BACKUP_TEMPLATES['B'].get('default'):
-                base_text = BACKUP_TEMPLATES['B']['default'][0][0]
-            else:
-                base_text = "Hey there! I totally get where you're coming from. Sometimes small changes make the biggest difference! Check my profile for more tips."
-            
-            # 生成不同的改写版本
-            alt_en = self._paraphrase_text_v2(base_text, len(alternatives) + 1)
-            alt_zh = self._simple_translate(alt_en)
-            
-            if alt_en not in used_texts:
+        # 选择两条与回复完全不同的
+        for alt in alternative_replies:
+            if len(alternatives) >= 2:
+                break
+            if alt['en'] not in used_texts and not self._is_similar(alt['en'], reply_text):
                 alternatives.append({
-                    'text': alt_en,
-                    'text_zh': alt_zh
+                    'text': alt['en'],
+                    'text_zh': alt['zh']
                 })
-                used_texts.add(alt_en)
+                used_texts.add(alt['en'])
         
-        return alternatives[:3]  # 确保最多三条
+        # 如果不足两条，补充更多
+        backup_additions = [
+            {
+                'en': "Hey sister! I feel you! Changing habits takes time, but you're already on the right track just by caring. Keep it up! Check my profile for more.",
+                'zh': "嘿姐妹！我懂你！改变习惯需要时间，但只要你在乎就已经在正确的轨道上了。继续加油！看我主页了解更多。"
+            },
+            {
+                'en': "Hi! Don't worry, we all go through this! The secret is consistency over perfection. One day at a time - you're doing great! DM me anytime!",
+                'zh': "嗨！别担心，我们都会经历这个！秘诀是坚持胜过完美。一天一天来——你做得很棒！随时私信我！"
+            }
+        ]
+        
+        for alt in backup_additions:
+            if len(alternatives) >= 2:
+                break
+            if alt['en'] not in used_texts:
+                alternatives.append({
+                    'text': alt['en'],
+                    'text_zh': alt['zh']
+                })
+                used_texts.add(alt['en'])
+        
+        return alternatives[:2]
     
     def _paraphrase_text_v2(self, text: str, variant: int = 1) -> str:
         """更有效的改写（支持多种变体）"""
@@ -699,41 +628,67 @@ Make this reply focus on positivity and motivation."""
         return 'en'
 
     def intercept(self, post_content: str = "", comment_content: str = "") -> BotResponse:
-        """生成截流话术 - 模型+话术库结合"""
+        """生成截流话术 - 三条完全不同的话术"""
         user_input = comment_content if comment_content else post_content
         
         # 检测语言
         detected_lang = self._detect_language(user_input)
         
-        # 1. 先确定标签
+        # 确定标签
         tag = self._simple_tag_detection(user_input)
         
-        # 2. 检查是否用话术库：只有当tag是A/B/C/D时才用，否则用模型
-        templates = BACKUP_TEMPLATES.get(tag, None)
-        en_text = ""
-        zh_text = ""
-        use_template = False
+        # 定义三个完全不同的话术库（不同角度）
+        all_replies = [
+            # 角度1：理解共情型
+            {
+                'en': "Hey girl! I totally get where you're coming from - I've been there too! Changing habits isn't easy, but you're already taking the first step just by caring. Check out my page for what helped me!",
+                'zh': "嘿姑娘！我完全理解你的感受——我也经历过！改变习惯不容易，但只要你在乎就已经迈出了第一步。来看看我的主页了解什么帮助了我！"
+            },
+            # 角度2：实用建议型
+            {
+                'en': "Hi there! Something that really made a difference for me was starting with super small changes - like drinking one extra glass of water a day. Small things add up! DM me for my simple tips!",
+                'zh': "嗨！真正对我有帮助的是从超小的改变开始——比如每天多喝一杯水。小事积累起来！私信我获取我的简单小贴士！"
+            },
+            # 角度3：积极鼓励型
+            {
+                'en': "Hey! Don't be too hard on yourself! Progress isn't perfect, it's about consistency! You're doing better than you think. Follow me for daily motivation!",
+                'zh': "嘿！别对自己太苛刻！进步不代表完美，而是关于坚持！你做得比你想象的更好。关注我获取每日动力！"
+            },
+            # 角度4：姐妹分享型
+            {
+                'en': "Hey sister! I feel you so much on this! For me, it was all about finding balance instead of restriction - that's what finally worked! Check my profile for my journey!",
+                'zh': "嘿姐妹！我太懂你了！对我来说，关键是找到平衡而不是限制——这才是真正有效的！看我主页了解我的旅程！"
+            },
+            # 角度5：轻松幽默型
+            {
+                'en': "Hey! You know what? We've all been there! The good news is you don't have to figure it out alone - I've got you! Come see my page for easy ideas!",
+                'zh': "嘿！你知道吗？我们都经历过！好消息是你不必独自解决——我来帮你！来看看我的主页获取简单想法！"
+            }
+        ]
         
-        if tag != 'unknown' and templates and 'default' in templates and len(templates['default']) > 0:
-            # 话术库有这个标签，优先用话术库（保证钩子和翻译对应）
-            template = templates['default'][0]
-            en_text = template[0]
-            zh_text = template[1]
-            use_template = True
-        else:
-            # 没有匹配到话术库，让模型生成
-            user_message = f"帖子内容: {post_content}\n评论内容: {comment_content}"
-            system_prompt = self._build_system_prompt("intercept", detected_lang)
-            raw_response = self._generate_response(system_prompt, user_message)
-            response = self._parse_response(raw_response, "intercept", detected_lang)
-            en_text = response.reply_text
-            zh_text = response.reply_zh or self._simple_translate(en_text)
-            # 确保模型生成的有钩子
-            if en_text and ('profile' not in en_text.lower() and 'dm' not in en_text.lower() and 'page' not in en_text.lower()):
-                en_text = en_text + " Check my profile!"
-                zh_text = zh_text + " 看我主页！"
+        # 随机打乱，选出三条完全不同的
+        import random
+        random.shuffle(all_replies)
         
-        # 3. 构建响应
+        # 第一条作为主回复
+        main_reply = all_replies[0]
+        en_text = main_reply['en']
+        zh_text = main_reply['zh']
+        
+        # 第二条和第三条作为备选
+        alternatives = []
+        if len(all_replies) > 1:
+            alternatives.append({
+                'text': all_replies[1]['en'],
+                'text_zh': all_replies[1]['zh']
+            })
+        if len(all_replies) > 2:
+            alternatives.append({
+                'text': all_replies[2]['en'],
+                'text_zh': all_replies[2]['zh']
+            })
+        
+        # 构建响应
         response = BotResponse()
         tag_names = {
             'A': 'A - 甜品上瘾',
@@ -748,41 +703,15 @@ Make this reply focus on positivity and motivation."""
         response.reply_zh = zh_text
         response.detected_language = detected_lang
         
-        if 'Check my profile' in en_text or 'Come check my page' in en_text:
+        if 'profile' in en_text.lower() or 'page' in en_text.lower():
             response.guidance = "引导关注主页"
-        elif 'DM me' in en_text:
+        elif 'dm' in en_text.lower() or 'message' in en_text.lower():
             response.guidance = "引导私信"
         else:
             response.guidance = "自然互动"
         
         if detected_lang == 'zh':
             response.reply_zh = ""
-        
-        # 4. 获取备选话术
-        alternatives = []
-        if use_template and templates:
-            for emotion in ['罪恶感循环', '自我厌弃', '耗竭感', '自我否定', 'default']:
-                if emotion in templates:
-                    for template in templates[emotion]:
-                        if template[0] != en_text and len(alternatives) < 2:
-                            alternatives.append({'text': template[0], 'text_zh': template[1]})
-            
-            if len(alternatives) < 2 and 'default' in templates:
-                for template in templates['default']:
-                    if template[0] != en_text and len(alternatives) < 2 and template[0] not in [a['text'] for a in alternatives]:
-                        alternatives.append({'text': template[0], 'text_zh': template[1]})
-        
-        if len(alternatives) < 2:
-            alt1 = en_text.replace('profile', 'page') if 'profile' in en_text else en_text.replace('Check my', 'Come see my')
-            alt1_zh = zh_text.replace('主页', '页面') if '主页' in zh_text else zh_text
-            if alt1 != en_text:
-                alternatives.append({'text': alt1, 'text_zh': alt1_zh})
-            
-            if len(alternatives) < 2:
-                alt2 = en_text.replace('DM me', 'Message me') if 'DM me' in en_text else en_text + ' DM me!'
-                alt2_zh = zh_text.replace('私信', '发消息') if '私信' in zh_text else zh_text + ' 私信我！'
-                if alt2 != en_text and alt2 != alt1:
-                    alternatives.append({'text': alt2, 'text_zh': alt2_zh})
         
         response.alternatives = alternatives[:2]
         return response
