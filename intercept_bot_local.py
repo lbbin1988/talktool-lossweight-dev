@@ -614,17 +614,30 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         return result
 
     def _simple_tag_detection(self, text: str) -> str:
-        """简单规则识别标签"""
+        """简单规则识别标签 - 更严格"""
         text_lower = text.lower()
-        if any(w in text_lower for w in ['sweet', 'dessert', 'candy', 'sugar', 'chocolate', 'ice cream']):
+        
+        # A类：明确与甜品相关
+        a_keywords = ['sweet', 'dessert', 'candy', 'sugar', 'chocolate', 'ice cream']
+        if any(w in text_lower for w in a_keywords):
             return 'A'
-        if any(w in text_lower for w in ['stress', 'binge', 'emotional', 'guilt', 'feeling', 'gut', 'stomach', 'digestive', 'weight', 'body']):
+        
+        # B类：明确与情绪、暴食、肠胃问题相关（去掉太泛的weight/body）
+        b_keywords = ['stress', 'binge', 'emotional', 'guilt', 'guilty', 'feeling', 'gut', 'stomach', 'digestive']
+        if any(w in text_lower for w in b_keywords):
             return 'B'
-        if any(w in text_lower for w in ['lazy', 'easy', 'simple', 'no effort', 'don\'t want to']):
+        
+        # C类：明确与懒人相关
+        c_keywords = ['lazy', 'no effort', 'don\'t want to', 'too tired']
+        if any(w in text_lower for w in c_keywords):
             return 'C'
-        if any(w in text_lower for w in ['fail', 'tried', 'nothing works', 'give up', 'always', 'never']):
+        
+        # D类：明确与失败、反复相关
+        d_keywords = ['fail', 'failed', 'nothing works', 'give up', 'always', 'never']
+        if any(w in text_lower for w in d_keywords):
             return 'D'
-        return 'B'  # 默认返回B（常见问题类型）
+        
+        return 'unknown'  # 没有匹配到话术库的标签，用模型生成
 
     def _detect_language(self, text: str) -> str:
         """检测语言"""
@@ -645,44 +658,39 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         # 1. 先确定标签
         tag = self._simple_tag_detection(user_input)
         
-        # 2. 先检查话术库有没有这个标签的话术
+        # 2. 检查是否用话术库：只有当tag是A/B/C/D时才用，否则用模型
         templates = BACKUP_TEMPLATES.get(tag, None)
-        
         en_text = ""
         zh_text = ""
         use_template = False
         
-        if templates and 'default' in templates and len(templates['default']) > 0:
+        if tag != 'unknown' and templates and 'default' in templates and len(templates['default']) > 0:
             # 话术库有这个标签，优先用话术库（保证钩子和翻译对应）
             template = templates['default'][0]
             en_text = template[0]
             zh_text = template[1]
             use_template = True
         else:
-            # 话术库没有，让模型生成
+            # 没有匹配到话术库，让模型生成
             user_message = f"帖子内容: {post_content}\n评论内容: {comment_content}"
             system_prompt = self._build_system_prompt("intercept", detected_lang)
             raw_response = self._generate_response(system_prompt, user_message)
             response = self._parse_response(raw_response, "intercept", detected_lang)
             en_text = response.reply_text
-            zh_text = response.reply_zh
+            zh_text = response.reply_zh or self._simple_translate(en_text)
             # 确保模型生成的有钩子
             if en_text and ('profile' not in en_text.lower() and 'dm' not in en_text.lower() and 'page' not in en_text.lower()):
                 en_text = en_text + " Check my profile!"
-                # 重新翻译
-                if zh_text:
-                    zh_text = zh_text + " 看我主页！"
-                else:
-                    zh_text = self._simple_translate(en_text)
+                zh_text = zh_text + " 看我主页！"
         
         # 3. 构建响应
         response = BotResponse()
-        # 标签加上中文描述
         tag_names = {
             'A': 'A - 甜品上瘾',
             'B': 'B - 情绪暴食',
             'C': 'C - 懒人摆烂',
-            'D': 'D - 反复失败'
+            'D': 'D - 反复失败',
+            'unknown': '自定义话术'
         }
         response.tag = tag_names.get(tag, tag)
         response.emotion = "default"
@@ -690,7 +698,6 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         response.reply_zh = zh_text
         response.detected_language = detected_lang
         
-        # 4. 确定引导方向
         if 'Check my profile' in en_text or 'Come check my page' in en_text:
             response.guidance = "引导关注主页"
         elif 'DM me' in en_text:
@@ -698,36 +705,29 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         else:
             response.guidance = "自然互动"
         
-        # 5. 如果是中文输入，不需要翻译
         if detected_lang == 'zh':
             response.reply_zh = ""
         
-        # 6. 获取备选话术（优先从话术库，没有的话就基于主话术简单改写）
+        # 4. 获取备选话术
         alternatives = []
-        
         if use_template and templates:
-            # 从话术库取
             for emotion in ['罪恶感循环', '自我厌弃', '耗竭感', '自我否定', 'default']:
                 if emotion in templates:
                     for template in templates[emotion]:
                         if template[0] != en_text and len(alternatives) < 2:
                             alternatives.append({'text': template[0], 'text_zh': template[1]})
             
-            # 补够2条
             if len(alternatives) < 2 and 'default' in templates:
                 for template in templates['default']:
                     if template[0] != en_text and len(alternatives) < 2 and template[0] not in [a['text'] for a in alternatives]:
                         alternatives.append({'text': template[0], 'text_zh': template[1]})
         
-        # 如果话术库没提供备选，就简单改写主话术
         if len(alternatives) < 2:
-            # 改写1
             alt1 = en_text.replace('profile', 'page') if 'profile' in en_text else en_text.replace('Check my', 'Come see my')
             alt1_zh = zh_text.replace('主页', '页面') if '主页' in zh_text else zh_text
             if alt1 != en_text:
                 alternatives.append({'text': alt1, 'text_zh': alt1_zh})
             
-            # 改写2
             if len(alternatives) < 2:
                 alt2 = en_text.replace('DM me', 'Message me') if 'DM me' in en_text else en_text + ' DM me!'
                 alt2_zh = zh_text.replace('私信', '发消息') if '私信' in zh_text else zh_text + ' 私信我！'
@@ -735,7 +735,6 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
                     alternatives.append({'text': alt2, 'text_zh': alt2_zh})
         
         response.alternatives = alternatives[:2]
-        
         return response
 
     def chat(self, history: List[str]) -> BotResponse:
@@ -761,44 +760,39 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         # 1. 先确定标签
         tag = self._simple_tag_detection(user_input)
         
-        # 2. 先检查话术库有没有这个标签的话术
+        # 2. 检查是否用话术库：只有当tag是A/B/C/D时才用，否则用模型
         templates = BACKUP_TEMPLATES.get(tag, None)
-        
         en_text = ""
         zh_text = ""
         use_template = False
         
-        if templates and 'default' in templates and len(templates['default']) > 0:
+        if tag != 'unknown' and templates and 'default' in templates and len(templates['default']) > 0:
             # 话术库有这个标签，优先用话术库（保证钩子和翻译对应）
             template = templates['default'][0]
             en_text = template[0]
             zh_text = template[1]
             use_template = True
         else:
-            # 话术库没有，让模型生成
+            # 没有匹配到话术库，让模型生成
             user_message = "\n".join(chat_history)
             system_prompt = self._build_system_prompt("chat", detected_lang)
             raw_response = self._generate_response(system_prompt, user_message)
             response = self._parse_response(raw_response, "chat", detected_lang)
             en_text = response.reply_text
-            zh_text = response.reply_zh
+            zh_text = response.reply_zh or self._simple_translate(en_text)
             # 确保模型生成的有钩子
             if en_text and ('profile' not in en_text.lower() and 'dm' not in en_text.lower() and 'page' not in en_text.lower()):
                 en_text = en_text + " Check my profile!"
-                # 重新翻译
-                if zh_text:
-                    zh_text = zh_text + " 看我主页！"
-                else:
-                    zh_text = self._simple_translate(en_text)
+                zh_text = zh_text + " 看我主页！"
         
         # 3. 构建响应
         response = BotResponse()
-        # 标签加上中文描述
         tag_names = {
             'A': 'A - 甜品上瘾',
             'B': 'B - 情绪暴食',
             'C': 'C - 懒人摆烂',
-            'D': 'D - 反复失败'
+            'D': 'D - 反复失败',
+            'unknown': '自定义话术'
         }
         response.tag = tag_names.get(tag, tag)
         response.emotion = "default"
@@ -806,7 +800,6 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         response.reply_zh = zh_text
         response.detected_language = detected_lang
         
-        # 4. 确定引导方向
         if 'Check my profile' in en_text or 'Come check my page' in en_text:
             response.guidance = "引导关注主页"
         elif 'DM me' in en_text:
@@ -814,36 +807,29 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         else:
             response.guidance = "自然互动"
         
-        # 5. 如果是中文输入，不需要翻译
         if detected_lang == 'zh':
             response.reply_zh = ""
         
-        # 6. 获取备选话术（优先从话术库，没有的话就基于主话术简单改写）
+        # 4. 获取备选话术
         alternatives = []
-        
         if use_template and templates:
-            # 从话术库取
             for emotion in ['罪恶感循环', '自我厌弃', '耗竭感', '自我否定', 'default']:
                 if emotion in templates:
                     for template in templates[emotion]:
                         if template[0] != en_text and len(alternatives) < 2:
                             alternatives.append({'text': template[0], 'text_zh': template[1]})
             
-            # 补够2条
             if len(alternatives) < 2 and 'default' in templates:
                 for template in templates['default']:
                     if template[0] != en_text and len(alternatives) < 2 and template[0] not in [a['text'] for a in alternatives]:
                         alternatives.append({'text': template[0], 'text_zh': template[1]})
         
-        # 如果话术库没提供备选，就简单改写主话术
         if len(alternatives) < 2:
-            # 改写1
             alt1 = en_text.replace('profile', 'page') if 'profile' in en_text else en_text.replace('Check my', 'Come see my')
             alt1_zh = zh_text.replace('主页', '页面') if '主页' in zh_text else zh_text
             if alt1 != en_text:
                 alternatives.append({'text': alt1, 'text_zh': alt1_zh})
             
-            # 改写2
             if len(alternatives) < 2:
                 alt2 = en_text.replace('DM me', 'Message me') if 'DM me' in en_text else en_text + ' DM me!'
                 alt2_zh = zh_text.replace('私信', '发消息') if '私信' in zh_text else zh_text + ' 私信我！'
@@ -851,7 +837,6 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
                     alternatives.append({'text': alt2, 'text_zh': alt2_zh})
         
         response.alternatives = alternatives[:2]
-        
         return response
 
 
