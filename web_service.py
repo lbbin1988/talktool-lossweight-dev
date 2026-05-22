@@ -3,6 +3,7 @@
 """
 主动截流工具 - Web 界面
 使用 Flask 提供网页服务
+支持：截流模式 + DM 对话模式
 """
 
 from flask import Flask, render_template_string, request, jsonify
@@ -17,8 +18,9 @@ from intercept_bot_local import LocalInterceptBot
 
 app = Flask(__name__)
 bot = None
+dm_history = []  # 保存 DM 对话历史
 
-# 简单的 HTML 模板
+# HTML 模板
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="zh-CN">
@@ -60,8 +62,37 @@ HTML_TEMPLATE = """
             opacity: 0.9;
             font-size: 14px;
         }
-        .content {
+        .tabs {
+            display: flex;
+            background: #f3f4f6;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .tab {
+            flex: 1;
+            padding: 15px;
+            text-align: center;
+            cursor: pointer;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            border: none;
+            background: none;
+            font-size: 16px;
+        }
+        .tab:hover {
+            background: #e5e7eb;
+        }
+        .tab.active {
+            background: white;
+            color: #667eea;
+            border-bottom: 3px solid #667eea;
+        }
+        .tab-content {
+            display: none;
             padding: 30px;
+        }
+        .tab-content.active {
+            display: block;
         }
         .input-group {
             margin-bottom: 25px;
@@ -180,15 +211,103 @@ HTML_TEMPLATE = """
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
+        /* DM 对话样式 */
+        .chat-container {
+            border: 2px solid #e5e7eb;
+            border-radius: 15px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        .chat-messages {
+            min-height: 300px;
+            max-height: 500px;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f9fafb;
+        }
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            flex-direction: column;
+        }
+        .message.user {
+            align-items: flex-end;
+        }
+        .message.bot {
+            align-items: flex-start;
+        }
+        .message-bubble {
+            max-width: 75%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        .message.user .message-bubble {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+        .message.bot .message-bubble {
+            background: white;
+            color: #333;
+            border-bottom-left-radius: 4px;
+            border: 1px solid #e5e7eb;
+        }
+        .message-label {
+            font-size: 11px;
+            color: #999;
+            margin-bottom: 4px;
+        }
+        .chat-input {
+            display: flex;
+            border-top: 1px solid #e5e7eb;
+            padding: 15px;
+            background: white;
+        }
+        .chat-input textarea {
+            flex: 1;
+            margin-right: 10px;
+            min-height: 50px;
+            max-height: 150px;
+        }
+        .chat-input button {
+            width: auto;
+            padding: 12px 30px;
+        }
+        .chat-actions {
+            margin-bottom: 15px;
+            display: flex;
+            gap: 10px;
+        }
+        .chat-actions button {
+            flex: 1;
+            padding: 10px;
+            font-size: 14px;
+        }
+        .btn-secondary {
+            background: #6b7280;
+        }
+        .btn-secondary:hover {
+            background: #4b5563;
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>📱 Instagram 主动截流工具</h1>
-            <p>输入帖子内容或评论，自动生成截流话术</p>
+            <p>评论截流 + DM 对话，一站式搞定</p>
         </div>
-        <div class="content">
+        
+        <!-- Tab 切换 -->
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('intercept')">💬 评论截流</button>
+            <button class="tab" onclick="switchTab('dm')">💌 DM 对话</button>
+        </div>
+        
+        <!-- 截流模式 -->
+        <div id="intercept-tab" class="tab-content active">
             <form id="interceptForm">
                 <div class="input-group">
                     <label>📝 帖子内容（可选）</label>
@@ -201,12 +320,12 @@ HTML_TEMPLATE = """
                 <button type="submit" id="submitBtn">✨ 生成截流话术</button>
             </form>
             
-            <div class="loading" id="loading">
+            <div class="loading" id="intercept-loading">
                 <div class="spinner"></div>
                 <p>正在生成中，请稍候...</p>
             </div>
             
-            <div class="result" id="result" style="display: none;">
+            <div class="result" id="intercept-result" style="display: none;">
                 <h3>🎯 生成结果</h3>
                 <div>
                     <span class="tag" id="tag">标签</span>
@@ -229,9 +348,61 @@ HTML_TEMPLATE = """
                 </div>
             </div>
         </div>
+        
+        <!-- DM 模式 -->
+        <div id="dm-tab" class="tab-content">
+            <div class="chat-actions">
+                <button type="button" class="btn-secondary" onclick="clearDmHistory()">🗑️ 清空对话</button>
+            </div>
+            
+            <div class="chat-container">
+                <div class="chat-messages" id="chat-messages">
+                    <!-- 消息会在这里显示 -->
+                </div>
+                
+                <div class="chat-input">
+                    <textarea id="dm-input" placeholder="输入她的消息..."></textarea>
+                    <button type="button" onclick="sendDmMessage()" id="dm-btn">💌 发送</button>
+                </div>
+            </div>
+            
+            <div class="loading" id="dm-loading">
+                <div class="spinner"></div>
+                <p>正在生成回复中，请稍候...</p>
+            </div>
+            
+            <div class="result" id="dm-result" style="display: none;">
+                <h3>💬 生成的 DM 回复</h3>
+                <div class="reply-box">
+                    <h4>🇺🇸 英文话术</h4>
+                    <p id="dm-reply_text"></p>
+                </div>
+                <div class="reply-box">
+                    <h4>🇨🇳 中文翻译</h4>
+                    <p id="dm-reply_zh"></p>
+                </div>
+            </div>
+        </div>
     </div>
     
     <script>
+        let dmHistory = [];
+        
+        // 切换 Tab
+        function switchTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+            
+            if (tab === 'intercept') {
+                document.querySelector('.tab:nth-child(1)').classList.add('active');
+                document.getElementById('intercept-tab').classList.add('active');
+            } else {
+                document.querySelector('.tab:nth-child(2)').classList.add('active');
+                document.getElementById('dm-tab').classList.add('active');
+            }
+        }
+        
+        // 截流模式提交
         document.getElementById('interceptForm').addEventListener('submit', async function(e) {
             e.preventDefault();
             
@@ -243,21 +414,15 @@ HTML_TEMPLATE = """
                 return;
             }
             
-            // 显示加载状态
-            document.getElementById('loading').style.display = 'block';
-            document.getElementById('result').style.display = 'none';
+            document.getElementById('intercept-loading').style.display = 'block';
+            document.getElementById('intercept-result').style.display = 'none';
             document.getElementById('submitBtn').disabled = true;
             
             try {
                 const response = await fetch('/api/intercept', {
                     method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({
-                        post_content: postContent,
-                        comment_content: commentContent
-                    })
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ post_content: postContent, comment_content: commentContent })
                 });
                 
                 const data = await response.json();
@@ -267,14 +432,12 @@ HTML_TEMPLATE = """
                     return;
                 }
                 
-                // 显示结果
                 document.getElementById('tag').textContent = '标签：' + data.tag;
                 document.getElementById('emotion').textContent = '情绪：' + data.emotion;
                 document.getElementById('guidance').textContent = data.guidance;
                 document.getElementById('reply_text').textContent = data.reply_text;
                 document.getElementById('reply_zh').textContent = data.reply_zh || '无需翻译';
                 
-                // 显示备选话术
                 const alternativesDiv = document.getElementById('alternatives');
                 alternativesDiv.innerHTML = '<h4>🔄 备选话术</h4>';
                 (data.alternatives || []).forEach((alt, index) => {
@@ -286,13 +449,98 @@ HTML_TEMPLATE = """
                     `;
                 });
                 
-                document.getElementById('result').style.display = 'block';
+                document.getElementById('intercept-result').style.display = 'block';
                 
             } catch (error) {
                 alert('请求失败：' + error.message);
             } finally {
-                document.getElementById('loading').style.display = 'none';
+                document.getElementById('intercept-loading').style.display = 'none';
                 document.getElementById('submitBtn').disabled = false;
+            }
+        });
+        
+        // DM 发送消息
+        async function sendDmMessage() {
+            const input = document.getElementById('dm-input');
+            const message = input.value.trim();
+            
+            if (!message) {
+                alert('请输入消息！');
+                return;
+            }
+            
+            dmHistory.push('她: ' + message);
+            renderChatMessages();
+            input.value = '';
+            
+            document.getElementById('dm-loading').style.display = 'block';
+            document.getElementById('dm-result').style.display = 'none';
+            document.getElementById('dm-btn').disabled = true;
+            
+            try {
+                const response = await fetch('/api/dm', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ history: dmHistory })
+                });
+                
+                const data = await response.json();
+                
+                if (data.error) {
+                    alert('错误：' + data.error);
+                    return;
+                }
+                
+                dmHistory.push('我: ' + data.reply_text);
+                renderChatMessages();
+                
+                document.getElementById('dm-reply_text').textContent = data.reply_text;
+                document.getElementById('dm-reply_zh').textContent = data.reply_zh || '无需翻译';
+                document.getElementById('dm-result').style.display = 'block';
+                
+            } catch (error) {
+                alert('请求失败：' + error.message);
+            } finally {
+                document.getElementById('dm-loading').style.display = 'none';
+                document.getElementById('dm-btn').disabled = false;
+            }
+        }
+        
+        // 渲染聊天历史
+        function renderChatMessages() {
+            const container = document.getElementById('chat-messages');
+            container.innerHTML = '';
+            
+            dmHistory.forEach(msg => {
+                const isUser = msg.startsWith('她: ');
+                const text = isUser ? msg.substring(3) : msg.startsWith('我: ') ? msg.substring(3) : msg;
+                
+                const div = document.createElement('div');
+                div.className = 'message ' + (isUser ? 'user' : 'bot');
+                div.innerHTML = `
+                    <div class="message-label">${isUser ? '她' : '我'}</div>
+                    <div class="message-bubble">${text}</div>
+                `;
+                container.appendChild(div);
+            });
+            
+            container.scrollTop = container.scrollHeight;
+        }
+        
+        // 清空对话历史
+        function clearDmHistory() {
+            if (confirm('确定要清空对话历史吗？')) {
+                dmHistory = [];
+                renderChatMessages();
+                document.getElementById('dm-result').style.display = 'none';
+            }
+        }
+        
+        // 回车发送 DM
+        document.getElementById('dm-input').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                sendDmMessage();
             }
         });
     </script>
@@ -329,6 +577,30 @@ def api_intercept():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+@app.route('/api/dm', methods=['POST'])
+def api_dm():
+    try:
+        data = request.json
+        history = data.get('history', [])
+        
+        global bot
+        if bot is None:
+            bot = LocalInterceptBot()
+        
+        result = bot.reply_dm(history)
+        
+        return jsonify({
+            'tag': result.tag,
+            'emotion': result.emotion,
+            'guidance': result.guidance,
+            'reply_text': result.reply_text,
+            'reply_zh': result.reply_zh,
+            'alternatives': result.alternatives,
+            'detected_language': result.detected_language
+        })
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 if __name__ == '__main__':
     print("=" * 60)
     print("🚀 Instagram 主动截流工具 - Web 服务")
@@ -336,8 +608,8 @@ if __name__ == '__main__':
     print("\n正在启动服务...")
     print("\n📱 使用方法：")
     print("1. 在浏览器中打开：http://localhost:5005")
-    print("2. 输入帖子内容和评论")
-    print("3. 点击生成按钮获取截流话术")
+    print("2. 💬 评论截流：输入评论生成话术")
+    print("3. 💌 DM 对话：模拟私信聊天")
     print("\n⏹️  停止服务：按 Ctrl + C")
     print("=" * 60)
     print("\n正在加载模型，请稍候...")
