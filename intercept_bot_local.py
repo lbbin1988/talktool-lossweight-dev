@@ -70,6 +70,29 @@ BACKUP_TEMPLATES = {
     },
 }
 
+SCENE_TEMPLATES = {
+    'buddy': {
+        'tag': 'C',
+        'tag_label': 'C：找搭子截流',
+        'emotion': '耗竭感',
+        'guidance': '找搭子截流',
+        'reply': {
+            'en': "Saw ur comment about wanting a weight loss buddy! same here - i tried everything but kept failing cuz i was fighting my body instead of allowing it to change 😅 finally found something that's literally just a daily drink + believing my body already knows how to change. no more forcing. wanna try together?",
+            'zh': "看到你评论说想找减肥搭子！我也是——以前试过好多方法但总失败，因为我一直在跟身体对抗，而不是允许它改变😅 后来终于找到一个超简单的方式，就是每天一杯日常饮品 + 相信身体本来就知道怎么改变。不再硬逼自己，要不要一起试试？"
+        },
+        'alternatives': [
+            {
+                'en': "Omg same, I was looking for a buddy too because doing it alone made me give up so fast 😅 What helped me was making it super low-pressure: one simple daily drink + reminding myself my body already knows how to change. Wanna keep each other on track?",
+                'zh': "天啊我也一样，我也想找搭子，因为一个人真的太容易放弃了😅 对我有用的是把它变得完全没压力：一个简单的日常饮品 + 提醒自己身体本来就知道怎么改变。要不要互相监督一下？"
+            },
+            {
+                'en': "Saw your buddy comment and felt that so hard 😂 I kept failing whenever I tried to force myself, so now I'm doing the simplest version possible: daily drink, no strict rules, just letting my body catch up. Want to try it together?",
+                'zh': "看到你找搭子的评论，我太懂了😂 我以前一硬逼自己就失败，所以现在只做最简单的版本：日常饮品、不搞严格规则，只是让身体慢慢跟上。要不要一起试？"
+            }
+        ]
+    }
+}
+
 
 @dataclass
 class BotResponse:
@@ -374,6 +397,23 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
                 used_texts.add(alt['en'])
         
         return alternatives[:2]
+
+    def _get_backup_alternatives_from_tag(self, tag: str, reply_text: str = "") -> List[dict]:
+        """从同一个标签的话术库中获取备选话术"""
+        alternatives = []
+        used_texts = {reply_text} if reply_text else set()
+        templates = BACKUP_TEMPLATES.get(tag, {})
+
+        for emotion in ['罪恶感循环', '自我厌弃', '耗竭感', '自我否定', 'default']:
+            for en_text, zh_text in templates.get(emotion, []):
+                if len(alternatives) >= 2:
+                    return alternatives
+                if en_text in used_texts or self._is_similar(en_text, reply_text):
+                    continue
+                alternatives.append({'text': en_text, 'text_zh': zh_text})
+                used_texts.add(en_text)
+
+        return alternatives
     
     def _paraphrase_text_v2(self, text: str, variant: int = 1) -> str:
         """更有效的改写（支持多种变体）"""
@@ -596,6 +636,19 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         """简单规则识别标签 - 更严格"""
         text_lower = text.lower()
         
+        # 找搭子场景：主动 DM 想找人一起减肥/互相监督的人，优先走场景 C 话术
+        buddy_keywords = [
+            'weight loss buddy', 'weightloss buddy', 'loss buddy',
+            'accountability partner', 'accountability buddy',
+            'workout buddy', 'diet buddy', 'need motivation',
+            'looking for a buddy', 'want a buddy', 'find a buddy',
+            'do this together', 'try together', 'wanna try together',
+            'someone to do this with', 'partner', '搭子', '一起减肥',
+            '互相监督', '找人一起', '一起打卡'
+        ]
+        if any(w in text_lower for w in buddy_keywords):
+            return 'buddy'
+        
         # A类：明确与甜品相关
         a_keywords = ['sweet', 'dessert', 'candy', 'sugar', 'chocolate', 'ice cream']
         if any(w in text_lower for w in a_keywords):
@@ -618,6 +671,48 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         
         return 'unknown'  # 没有匹配到话术库的标签，用模型生成
 
+    def _simple_emotion_detection(self, text: str, tag: str) -> str:
+        """根据用户评论和标签选择话术库里的情绪分支"""
+        text_lower = text.lower()
+
+        if tag == 'A':
+            guilt_keywords = [
+                "can't stop", "cant stop", "cannot stop", "craving", "cravings",
+                "guilt", "guilty", "shame", "ashamed", "戒不掉", "停不下来",
+                "控制不住", "罪恶感", "内疚"
+            ]
+            if any(w in text_lower for w in guilt_keywords):
+                return '罪恶感循环'
+
+        if tag == 'B':
+            self_hate_keywords = [
+                "hate myself", "binge", "out of control", "stress eat",
+                "emotional eat", "guilty", "shame", "恨自己", "暴食",
+                "压力吃", "情绪化", "控制不住"
+            ]
+            if any(w in text_lower for w in self_hate_keywords):
+                return '自我厌弃'
+
+        if tag == 'C':
+            exhaustion_keywords = [
+                "lazy", "no effort", "too tired", "too complicated",
+                "don't want to", "dont want to", "懒", "不想", "太麻烦",
+                "没精力"
+            ]
+            if any(w in text_lower for w in exhaustion_keywords):
+                return '耗竭感'
+
+        if tag == 'D':
+            self_doubt_keywords = [
+                "nothing works", "never works", "give up", "giving up",
+                "hopeless", "反复失败", "没用", "放弃", "不行"
+            ]
+            if any(w in text_lower for w in self_doubt_keywords):
+                return '自我否定'
+            return '自我否定'
+
+        return 'default'
+
     def _detect_language(self, text: str) -> str:
         """检测语言"""
         chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
@@ -636,6 +731,45 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
         
         # 确定标签
         tag = self._simple_tag_detection(user_input)
+        
+        if tag in SCENE_TEMPLATES:
+            scene = SCENE_TEMPLATES[tag]
+            response = BotResponse()
+            response.tag = scene['tag_label']
+            response.emotion = scene['emotion']
+            response.guidance = scene['guidance']
+            response.reply_text = scene['reply']['en']
+            response.reply_zh = scene['reply']['zh']
+            response.detected_language = detected_lang
+            response.alternatives = [
+                {'text': alt['en'], 'text_zh': alt['zh']}
+                for alt in scene['alternatives']
+            ][:2]
+            if detected_lang == 'zh':
+                response.reply_zh = ""
+            return response
+
+        if tag in BACKUP_TEMPLATES:
+            emotion = self._simple_emotion_detection(user_input, tag)
+            en_text, zh_text, guidance = self._get_backup_response(tag, emotion)
+
+            response = BotResponse()
+            tag_names = {
+                'A': 'A - 甜品上瘾',
+                'B': 'B - 情绪暴食',
+                'C': 'C - 懒人摆烂',
+                'D': 'D - 反复失败',
+            }
+            response.tag = tag_names.get(tag, tag)
+            response.emotion = emotion
+            response.guidance = guidance
+            response.reply_text = en_text
+            response.reply_zh = zh_text
+            response.detected_language = detected_lang
+            response.alternatives = self._get_backup_alternatives_from_tag(tag, en_text)
+            if detected_lang == 'zh':
+                response.reply_zh = ""
+            return response
         
         # 定义三个完全不同的话术库（不同角度）
         all_replies = [
@@ -695,6 +829,7 @@ D-反复失败人群：尝试过很多方法都失败、自我否定
             'B': 'B - 情绪暴食',
             'C': 'C - 懒人摆烂',
             'D': 'D - 反复失败',
+            'buddy': 'C：找搭子截流',
             'unknown': '自定义话术'
         }
         response.tag = tag_names.get(tag, tag)

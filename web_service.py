@@ -119,6 +119,29 @@ HTML_TEMPLATE = """
             min-height: 100px;
             resize: vertical;
         }
+        .textarea-wrap {
+            position: relative;
+        }
+        .textarea-wrap textarea {
+            padding-right: 72px;
+        }
+        .clear-btn {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            width: auto;
+            padding: 5px 10px;
+            background: #e5e7eb;
+            color: #4b5563;
+            border-radius: 8px;
+            font-size: 12px;
+            box-shadow: none;
+        }
+        .clear-btn:hover {
+            transform: none;
+            box-shadow: none;
+            background: #d1d5db;
+        }
         button {
             width: 100%;
             padding: 15px;
@@ -261,13 +284,16 @@ HTML_TEMPLATE = """
         }
         .chat-input {
             display: flex;
+            align-items: stretch;
             border-top: 1px solid #e5e7eb;
             padding: 15px;
             background: white;
         }
-        .chat-input textarea {
+        .chat-input .textarea-wrap {
             flex: 1;
             margin-right: 10px;
+        }
+        .chat-input textarea {
             min-height: 50px;
             max-height: 150px;
         }
@@ -311,11 +337,17 @@ HTML_TEMPLATE = """
             <form id="interceptForm">
                 <div class="input-group">
                     <label>📝 帖子内容（可选）</label>
-                    <textarea name="post_content" id="post_content" placeholder="输入帖子内容..."></textarea>
+                    <div class="textarea-wrap">
+                        <textarea name="post_content" id="post_content" placeholder="输入帖子内容..."></textarea>
+                        <button type="button" class="clear-btn" onclick="clearTextarea('post_content')">清除</button>
+                    </div>
                 </div>
                 <div class="input-group">
                     <label>💬 评论内容（必填）</label>
-                    <textarea name="comment_content" id="comment_content" placeholder="输入评论内容..."></textarea>
+                    <div class="textarea-wrap">
+                        <textarea name="comment_content" id="comment_content" placeholder="输入评论内容..."></textarea>
+                        <button type="button" class="clear-btn" onclick="clearInterceptComment()">清除</button>
+                    </div>
                 </div>
                 <button type="submit" id="submitBtn">✨ 生成截流话术</button>
             </form>
@@ -361,7 +393,10 @@ HTML_TEMPLATE = """
                 </div>
                 
                 <div class="chat-input">
-                    <textarea id="dm-input" placeholder="输入用户的消息..."></textarea>
+                    <div class="textarea-wrap">
+                        <textarea id="dm-input" placeholder="输入用户的消息..."></textarea>
+                        <button type="button" class="clear-btn" onclick="clearTextarea('dm-input')">清除</button>
+                    </div>
                     <button type="button" onclick="sendDmMessage()" id="dm-btn">💌 发送</button>
                 </div>
             </div>
@@ -387,6 +422,17 @@ HTML_TEMPLATE = """
     
     <script>
         let dmHistory = []; // 每个元素是对象 { role: 'user' | 'bot', text: string }
+
+        function clearTextarea(id) {
+            const el = document.getElementById(id);
+            el.value = '';
+            el.focus();
+        }
+
+        function clearInterceptComment() {
+            clearTextarea('comment_content');
+            document.getElementById('intercept-result').style.display = 'none';
+        }
         
         // 切换 Tab
         function switchTab(tab) {
